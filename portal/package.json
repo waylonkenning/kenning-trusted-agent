@@ -19,7 +19,7 @@
     "pdfjs-dist": "^4.10.38",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "vite": "^6.0.7"
+    "vite": "^8.2.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
