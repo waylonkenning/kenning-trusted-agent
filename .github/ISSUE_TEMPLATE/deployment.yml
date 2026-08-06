@@ -1,0 +1,33 @@
+name: Deployment issue
+description: Report a defect in the public AWS single-tenant deployment path
+title: "deploy: "
+labels:
+  - deployment
+body:
+  - type: input
+    id: release
+    attributes:
+      label: Release or commit
+    validations:
+      required: true
+  - type: input
+    id: region
+    attributes:
+      label: AWS region
+      description: Do not include an account ID, resource ARN, or private URL.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and result
+      description: Redact parameters, tokens, account IDs, URLs, and customer data.
+    validations:
+      required: true
+  - type: textarea
+    id: cleanup
+    attributes:
+      label: Cleanup state
+      description: State whether the failed test resources were removed or retained for investigation.
+    validations:
+      required: false

@@ -1,0 +1,1373 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Parameterised, isolated Kenning Trusted Agent deployment for one customer
+  workspace. Deploy this template in the customer's data-residency region.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Customer deployment
+        Parameters:
+          - AgencyName
+          - AgencySlug
+          - EnvironmentName
+          - DeploymentMode
+          - RetentionDays
+          - LegalHoldDefault
+      - Label:
+          default: Immutable application artifacts
+        Parameters:
+          - LambdaArtifactBucket
+          - LambdaArtifactKey
+          - CitationFetcherArtifactKey
+          - WebArtifactKey
+          - LambdaArtifactVersion
+          - ReleaseId
+          - ReleaseSourceCommit
+          - ReleaseName
+          - ReleaseVersion
+      - Label:
+          default: Portal and identity
+        Parameters:
+          - PortalDomain
+          - PortalCertificateArn
+          - PortalTitle
+          - PortalPrimaryColor
+          - PortalLogoUrl
+          - EnablePasskeys
+      - Label:
+          default: Optional client-managed pipeline
+        Parameters:
+          - CreateClientPipeline
+          - SourceConnectionArn
+          - RepositoryId
+          - BranchName
+          - DeploymentStackName
+      - Label:
+          default: Optional private networking
+        Parameters:
+          - VpcSubnetIds
+          - VpcSecurityGroupIds
+
+Parameters:
+  AgencyName:
+    Type: String
+    Default: Customer agency
+    MinLength: 2
+    MaxLength: 64
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9 .,&''-]{1,63}$'
+    Description: Human-readable agency name used in tags and portal metadata.
+  AgencySlug:
+    Type: String
+    Default: customer-agency
+    MinLength: 2
+    MaxLength: 20
+    AllowedPattern: '^[a-z0-9][a-z0-9-]{0,18}[a-z0-9]$'
+    Description: Lowercase identifier used in resource names and the single workspace ID.
+  EnvironmentName:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Environment name. The CloudFormation stack region is the data-residency region.
+  DeploymentMode:
+    Type: String
+    Default: client-managed
+    AllowedValues: [client-managed]
+    Description: Customer-owned operational mode recorded on resources and in the runbook.
+  RetentionDays:
+    Type: Number
+    Default: 365
+    MinValue: 1
+    MaxValue: 3650
+    Description: Default audit, proof, and approval retention setting for bootstrap configuration.
+  LegalHoldDefault:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Whether the bootstrap workspace starts with legal hold enabled.
+
+  LambdaArtifactBucket:
+    Type: String
+    MinLength: 3
+    MaxLength: 63
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]+[a-z0-9]$'
+    Description: Existing private S3 bucket containing the immutable release artifacts.
+  LambdaArtifactKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: '^[^\s]+$'
+    Description: S3 key for the Python Guard Lambda zip.
+  CitationFetcherArtifactKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: '^[^\s]+$'
+    Description: S3 key for the Node.js citation fetcher Lambda zip.
+  WebArtifactKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: '^[^\s]+$'
+    Description: S3 key for the portal web tarball. The deployment CLI uploads it after stack creation.
+  LambdaArtifactVersion:
+    Type: String
+    Default: bootstrap
+    MaxLength: 128
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+    Description: Changes this value to publish a new immutable Lambda version.
+  ReleaseId:
+    Type: String
+    Default: single-tenant-bootstrap
+    MaxLength: 128
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+  ReleaseSourceCommit:
+    Type: String
+    Default: '0000000000000000000000000000000000000000'
+    AllowedPattern: '^[0-9a-f]{40}$'
+  ReleaseName:
+    Type: String
+    Default: Client deployment
+    MaxLength: 64
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$'
+  ReleaseVersion:
+    Type: String
+    Default: 0.1.0
+    AllowedPattern: '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'
+
+  PortalDomain:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[A-Za-z0-9][A-Za-z0-9.-]+[A-Za-z0-9]$'
+    Description: Optional agency portal hostname. Leave empty to use the CloudFront hostname.
+  PortalCertificateArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:[A-Za-z0-9-]+:acm:us-east-1:[0-9]{12}:certificate/[A-Za-z0-9-]+$'
+    Description: ACM certificate ARN in us-east-1, required when PortalDomain is set.
+  PortalTitle:
+    Type: String
+    Default: Kenning Trusted Agent
+    MinLength: 2
+    MaxLength: 80
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9 .,&''-]{1,79}$'
+  PortalPrimaryColor:
+    Type: String
+    Default: '#5A4AB3'
+    AllowedPattern: '^#[0-9A-Fa-f]{6}$'
+  PortalLogoUrl:
+    Type: String
+    Default: ''
+    MaxLength: 2048
+    AllowedPattern: '^$|^https://[^\s]+$'
+  EnablePasskeys:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+
+  AllowPatBootstrap:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Temporary owner bootstrap through a PAT. Keep false after the first owner session is created.
+  CreateClientPipeline:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Create an optional CodePipeline that validates and deploys this repository in client-managed mode.
+  SourceConnectionArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^arn:[A-Za-z0-9-]+:codestar-connections:[A-Za-z0-9-]+:[0-9]{12}:connection/[A-Za-z0-9-]+$'
+    Description: Existing AWS CodeConnections connection used only when CreateClientPipeline is true.
+  RepositoryId:
+    Type: String
+    Default: waylonkenning/kenning-trusted-agent
+    AllowedPattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+  BranchName:
+    Type: String
+    Default: main
+    AllowedPattern: '^[A-Za-z0-9._/-]+$'
+  DeploymentStackName:
+    Type: String
+    Default: kta-single-tenant
+    MaxLength: 128
+    AllowedPattern: '^[A-Za-z][-A-Za-z0-9]*$'
+
+  VpcSubnetIds:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Optional private subnet IDs for the Guard Lambda. Provide NAT or AWS service VPC endpoints before enabling.
+  VpcSecurityGroupIds:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Optional security group IDs for the Guard Lambda. Required with VpcSubnetIds.
+Conditions:
+  HasPortalDomain: !Not [!Equals [!Ref PortalDomain, '']]
+  HasPortalCertificate: !Not [!Equals [!Ref PortalCertificateArn, '']]
+  CreatePipeline: !Equals [!Ref CreateClientPipeline, 'true']
+  HasPasskeys: !Equals [!Ref EnablePasskeys, 'true']
+  HasVpc: !And
+    - !Not [!Equals [!Join ['', !Ref VpcSubnetIds], '']]
+    - !Not [!Equals [!Join ['', !Ref VpcSecurityGroupIds], '']]
+
+Resources:
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub kta-${AgencySlug}-${EnvironmentName}-audit
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: retention_expires_at
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: AgencySlug
+          Value: !Ref AgencySlug
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: DataResidencyRegion
+          Value: !Ref AWS::Region
+        - Key: DeploymentMode
+          Value: !Ref DeploymentMode
+
+  TokenTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub kta-${AgencySlug}-${EnvironmentName}-tokens
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token_hash
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: token_id
+          AttributeType: S
+        - AttributeName: agent_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token_hash
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: tenant-token-index
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: token_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: agent-token-index
+          KeySchema:
+            - AttributeName: agent_id
+              KeyType: HASH
+            - AttributeName: token_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: AgencySlug
+          Value: !Ref AgencySlug
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: DataResidencyRegion
+          Value: !Ref AWS::Region
+        - Key: DeploymentMode
+          Value: !Ref DeploymentMode
+
+  ReceiptKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub KTA receipt signing key for ${AgencyName} (${EnvironmentName})
+      EnableKeyRotation: true
+      KeySpec: RSA_2048
+      KeyUsage: SIGN_VERIFY
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableAccountRoot
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: 'kms:*'
+            Resource: '*'
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ReceiptKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/kta-${AgencySlug}-${EnvironmentName}-receipt
+      TargetKeyId: !Ref ReceiptKey
+
+  TenantOAuthSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub kenning/tenants/${AgencySlug}/oauth/client
+      Description: !Sub Tenant-scoped OAuth secret namespace for ${AgencyName}. Replace the generated value before using external introspection.
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: client_secret
+        PasswordLength: 48
+        ExcludePunctuation: true
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: AgencySlug
+          Value: !Ref AgencySlug
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  GuardRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub kta-${AgencySlug}-${EnvironmentName}-guard-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: guard-runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AuditTable
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt AuditTable.Arn
+              - Sid: TokenTable
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt TokenTable.Arn
+                  - !Sub ${TokenTable.Arn}/index/*
+              - Sid: ReceiptSigning
+                Effect: Allow
+                Action:
+                  - kms:GetPublicKey
+                  - kms:Sign
+                  - kms:Verify
+                Resource: !GetAtt ReceiptKey.Arn
+              - Sid: TenantSecrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:kenning/tenants/${AgencySlug}/*
+              - Sid: InvokeCitationFetcher
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt CitationFetcherFunction.Arn
+              - Sid: CognitoConfirmation
+                Effect: Allow
+                Action:
+                  - cognito-idp:ConfirmSignUp
+                  - cognito-idp:ResendConfirmationCode
+                Resource: !GetAtt UserPool.Arn
+              - Sid: LambdaLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  CitationFetcherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub kta-${AgencySlug}-${EnvironmentName}-citation-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  GuardFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - GuardRole
+      - ReceiptKeyAlias
+    Properties:
+      FunctionName: !Sub kta-${AgencySlug}-${EnvironmentName}-guard
+      Description: !Sub Kenning Trusted Agent Guard for ${AgencyName}
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Architectures: [arm64]
+      MemorySize: 1024
+      Timeout: 30
+      Role: !GetAtt GuardRole.Arn
+      VpcConfig: !If
+        - HasVpc
+        - SubnetIds: !Ref VpcSubnetIds
+          SecurityGroupIds: !Ref VpcSecurityGroupIds
+        - !Ref AWS::NoValue
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref LambdaArtifactKey
+      Environment:
+        Variables:
+          AUDIT_TABLE_NAME: !Ref AuditTable
+          TOKEN_TABLE_NAME: !Ref TokenTable
+          TOKEN_TENANT_INDEX_NAME: tenant-token-index
+          TOKEN_AGENT_INDEX_NAME: agent-token-index
+          KENNING_ENV: !Ref EnvironmentName
+          CONTROL_PLANE_SINGLE_TENANT_ID: !Ref AgencySlug
+          CONTROL_PLANE_ALLOW_PAT_BOOTSTRAP: !Ref AllowPatBootstrap
+          CONTROL_PLANE_SESSION_TTL_SECONDS: '28800'
+          CONTROL_PLANE_SESSION_INACTIVITY_SECONDS: '1800'
+          CONTROL_PLANE_PORTAL_ORIGIN: !If
+            - HasPortalDomain
+            - !Sub https://${PortalDomain}
+            - !Sub https://${PortalDistribution.DomainName}
+          CONTROL_PLANE_OIDC_ISSUER_URL: !GetAtt UserPool.ProviderURL
+          CONTROL_PLANE_OIDC_CLIENT_ID: !Ref UserPoolClient
+          CONTROL_PLANE_OIDC_REDIRECT_URI: !If
+            - HasPortalDomain
+            - !Sub https://${PortalDomain}/auth/callback
+            - !Sub https://${PortalDistribution.DomainName}/auth/callback
+          CONTROL_PLANE_OIDC_AUTHORIZATION_URL: !Sub https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/authorize
+          CONTROL_PLANE_OIDC_TOKEN_URL: !Sub https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/token
+          CONTROL_PLANE_OIDC_JWKS_URL: !Sub ${UserPool.ProviderURL}/.well-known/jwks.json
+          CONTROL_PLANE_OIDC_SCOPES: openid profile email
+          CONTROL_PLANE_OIDC_PASSKEYS_ENABLED: !Ref EnablePasskeys
+          RECEIPT_SIGNING_MODE: kms
+          RECEIPT_KMS_KEY_ID: !GetAtt ReceiptKey.Arn
+          CITATION_FETCHER_FUNCTION_NAME: !Ref CitationFetcherFunction
+          CITATION_FETCHER_REGION: !Ref AWS::Region
+          CITATION_FETCH_RETRY_ATTEMPTS: '3'
+          CITATION_FETCH_BUDGET_SECONDS: '12'
+          RELEASE_ID: !Ref ReleaseId
+          RELEASE_SOURCE_COMMIT: !Ref ReleaseSourceCommit
+          RELEASE_NAME: !Ref ReleaseName
+          RELEASE_VERSION: !Ref ReleaseVersion
+          PORTAL_TITLE: !Ref PortalTitle
+          PORTAL_PRIMARY_COLOR: !Ref PortalPrimaryColor
+          PORTAL_LOGO_URL: !Ref PortalLogoUrl
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: AgencySlug
+          Value: !Ref AgencySlug
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: DataResidencyRegion
+          Value: !Ref AWS::Region
+        - Key: DeploymentMode
+          Value: !Ref DeploymentMode
+
+  GuardFunctionVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref GuardFunction
+      Description: !Sub ${ReleaseId} (${LambdaArtifactVersion})
+
+  GuardAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref GuardFunction
+      FunctionVersion: !GetAtt GuardFunctionVersion.Version
+      Name: live
+      Description: Stable client traffic alias.
+
+  CitationFetcherFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub kta-${AgencySlug}-${EnvironmentName}-citation
+      Description: !Sub Kenning Citation Trust fetcher for ${AgencyName}
+      Runtime: nodejs22.x
+      Handler: citation_fetcher.handler
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 12
+      Role: !GetAtt CitationFetcherRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref CitationFetcherArtifactKey
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub kta-${AgencySlug}-${EnvironmentName}-api
+      ProtocolType: HTTP
+      Description: !Sub Isolated Kenning Trusted Agent API for ${AgencyName}
+      CorsConfiguration:
+        AllowCredentials: true
+        AllowHeaders:
+          - accept
+          - authorization
+          - content-type
+          - x-kenning-csrf
+          - x-kenning-pat
+          - x-kenning-tenant-id
+        AllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+        AllowOrigins:
+          - !If
+            - HasPortalDomain
+            - !Sub https://${PortalDomain}
+            - !Sub https://${PortalDistribution.DomainName}
+        MaxAge: 300
+
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GuardAlias.Arn}/invocations
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 29000
+
+  HttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: '$default'
+      Target: !Sub integrations/${HttpApiIntegration}
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      Tags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        Environment: !Ref EnvironmentName
+
+  HttpApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref GuardAlias
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+  PortalBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub kta-${AgencySlug}-${EnvironmentName}-portal-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BlockPublicAccessConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: AgencySlug
+          Value: !Ref AgencySlug
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: DataResidencyRegion
+          Value: !Ref AWS::Region
+        - Key: DeploymentMode
+          Value: !Ref DeploymentMode
+
+  PortalOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub kta-${AgencySlug}-${EnvironmentName}-portal-oac
+        Description: Private S3 origin for the isolated client portal.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  PortalDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub KTA ${AgencyName} ${EnvironmentName} portal
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Aliases: !If
+          - HasPortalDomain
+          - [!Ref PortalDomain]
+          - !Ref AWS::NoValue
+        Origins:
+          - Id: portal-s3-origin
+            DomainName: !GetAtt PortalBucket.RegionalDomainName
+            OriginAccessControlId: !Ref PortalOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: portal-s3-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          Compress: true
+          MinTTL: 0
+          DefaultTTL: 0
+          MaxTTL: 86400
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+        ViewerCertificate: !If
+          - HasPortalCertificate
+          - AcmCertificateArn: !Ref PortalCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        Tags:
+          - Key: Project
+            Value: kenning-trusted-agent
+          - Key: Agency
+            Value: !Ref AgencyName
+          - Key: AgencySlug
+            Value: !Ref AgencySlug
+          - Key: Environment
+            Value: !Ref EnvironmentName
+          - Key: DataResidencyRegion
+            Value: !Ref AWS::Region
+          - Key: DeploymentMode
+            Value: !Ref DeploymentMode
+
+  PortalBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PortalBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${PortalBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${PortalDistribution}
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Sub kta-${AgencySlug}-${EnvironmentName}-users
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 14
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      UserPoolTags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        AgencySlug: !Ref AgencySlug
+        Environment: !Ref EnvironmentName
+        DataResidencyRegion: !Ref AWS::Region
+        DeploymentMode: !Ref DeploymentMode
+
+  CognitoDomainPrefix:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /kta/${AgencySlug}/${EnvironmentName}/cognito-domain-prefix
+      Type: String
+      Value: !Sub kta-${AgencySlug}-${EnvironmentName}-${AWS::AccountId}
+      Tags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        Environment: !Ref EnvironmentName
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub kta-${AgencySlug}-${EnvironmentName}-${AWS::AccountId}
+      UserPoolId: !Ref UserPool
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: PortalDistribution
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub kta-${AgencySlug}-${EnvironmentName}-portal
+      GenerateSecret: false
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - !Sub https://${PortalDistribution.DomainName}/auth/callback
+        - !If
+          - HasPortalDomain
+          - !Sub https://${PortalDomain}/auth/callback
+          - !Ref AWS::NoValue
+      LogoutURLs:
+        - !Sub https://${PortalDistribution.DomainName}/app
+        - !If
+          - HasPortalDomain
+          - !Sub https://${PortalDomain}/app
+          - !Ref AWS::NoValue
+
+  BrandingTitleParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /kta/${AgencySlug}/${EnvironmentName}/branding/title
+      Type: String
+      Value: !Ref PortalTitle
+      Tags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        Environment: !Ref EnvironmentName
+  BrandingColorParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /kta/${AgencySlug}/${EnvironmentName}/branding/primary-color
+      Type: String
+      Value: !Ref PortalPrimaryColor
+      Tags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        Environment: !Ref EnvironmentName
+  BrandingLogoParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /kta/${AgencySlug}/${EnvironmentName}/branding/logo-url
+      Type: String
+      Value: !Ref PortalLogoUrl
+      Tags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        Environment: !Ref EnvironmentName
+  RetentionParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /kta/${AgencySlug}/${EnvironmentName}/retention-days
+      Type: String
+      Value: !Ref RetentionDays
+      Tags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        Environment: !Ref EnvironmentName
+  LegalHoldParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /kta/${AgencySlug}/${EnvironmentName}/legal-hold-default
+      Type: String
+      Value: !Ref LegalHoldDefault
+      Tags:
+        Project: kenning-trusted-agent
+        Agency: !Ref AgencyName
+        Environment: !Ref EnvironmentName
+
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} Guard Lambda errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GuardFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  LambdaThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} Guard Lambda throttles.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GuardFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} Guard Lambda p95 duration above 10 seconds.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GuardFunction
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 10000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  ApiErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} API Gateway 5xx responses.
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+        - Name: Stage
+          Value: '$default'
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  ApiLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} API Gateway p95 latency above 10 seconds.
+      Namespace: AWS/ApiGateway
+      MetricName: Latency
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+        - Name: Stage
+          Value: '$default'
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 10000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  AuditReadThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} audit table read throttles.
+      Namespace: AWS/DynamoDB
+      MetricName: ReadThrottleEvents
+      Dimensions:
+        - Name: TableName
+          Value: !Ref AuditTable
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  AuditWriteThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} audit table write throttles.
+      Namespace: AWS/DynamoDB
+      MetricName: WriteThrottleEvents
+      Dimensions:
+        - Name: TableName
+          Value: !Ref AuditTable
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  TokenReadThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} token table read throttles.
+      Namespace: AWS/DynamoDB
+      MetricName: ReadThrottleEvents
+      Dimensions:
+        - Name: TableName
+          Value: !Ref TokenTable
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  Portal5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: !Sub KTA ${AgencyName} CloudFront portal 5xx responses.
+      Namespace: AWS/CloudFront
+      MetricName: 5xxErrorRate
+      Dimensions:
+        - Name: DistributionId
+          Value: !Ref PortalDistribution
+        - Name: Region
+          Value: Global
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  OperationsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub kta-${AgencySlug}-${EnvironmentName}-operations
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {"type":"metric","x":0,"y":0,"width":12,"height":6,"properties":{"title":"Guard Lambda health","region":"${AWS::Region}","period":60,"stat":"Sum","view":"timeSeries","metrics":[["AWS/Lambda","Invocations","FunctionName","${GuardFunction}"],["AWS/Lambda","Errors","FunctionName","${GuardFunction}"],["AWS/Lambda","Throttles","FunctionName","${GuardFunction}"]] }},
+            {"type":"metric","x":12,"y":0,"width":12,"height":6,"properties":{"title":"API Gateway latency","region":"${AWS::Region}","period":300,"view":"timeSeries","metrics":[["AWS/ApiGateway","5XXError","ApiId","${HttpApi}","Stage","$default"],["AWS/ApiGateway","Latency","ApiId","${HttpApi}","Stage","$default",{"stat":"p95"}]]}},
+            {"type":"metric","x":0,"y":6,"width":12,"height":6,"properties":{"title":"Audit and token throttles","region":"${AWS::Region}","period":60,"stat":"Sum","view":"timeSeries","metrics":[["AWS/DynamoDB","ReadThrottleEvents","TableName","${AuditTable}"],["AWS/DynamoDB","WriteThrottleEvents","TableName","${AuditTable}"],["AWS/DynamoDB","ReadThrottleEvents","TableName","${TokenTable}"]] }},
+            {"type":"metric","x":12,"y":6,"width":12,"height":6,"properties":{"title":"Portal errors","region":"us-east-1","period":300,"stat":"Average","view":"timeSeries","metrics":[["AWS/CloudFront","5xxErrorRate","DistributionId","${PortalDistribution}","Region","Global"]]}}
+          ]
+        }
+
+  PipelineArtifactBucket:
+    Condition: CreatePipeline
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BlockPublicAccessConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpirePipelineArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PipelineRole:
+    Condition: CreatePipeline
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub kta-${AgencySlug}-${EnvironmentName}-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: pipeline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt PipelineArtifactBucket.Arn
+                  - !Sub ${PipelineArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action: codestar-connections:UseConnection
+                Resource: !Ref SourceConnectionArn
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource:
+                  - !GetAtt ValidationProject.Arn
+                  - !GetAtt DeploymentProject.Arn
+
+  PipelineBuildRole:
+    Condition: CreatePipeline
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub kta-${AgencySlug}-${EnvironmentName}-build-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: client-deployment-build
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              - Sid: PipelineArtifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt PipelineArtifactBucket.Arn
+                  - !Sub ${PipelineArtifactBucket.Arn}/*
+              - Sid: ReleaseArtifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:HeadObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${LambdaArtifactBucket}/*
+              - Sid: DeployStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:GetTemplate
+                  - cloudformation:ListStackResources
+                  - cloudformation:UpdateStack
+                  - cloudformation:ValidateTemplate
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${DeploymentStackName}/*
+              - Sid: DeployResources
+                Effect: Allow
+                Action:
+                  - apigateway:*
+                  - cloudfront:*
+                  - cognito-idp:*
+                  - cloudwatch:*
+                  - dynamodb:*
+                  - iam:CreateRole
+                  - iam:CreatePolicy
+                  - iam:DeleteRole
+                  - iam:DeletePolicy
+                  - iam:GetRole
+                  - iam:GetPolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:PassRole
+                  - kms:*
+                  - lambda:*
+                  - s3:*
+                  - secretsmanager:*
+                  - ssm:*
+                Resource: '*'
+              - Sid: PassRuntimeRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt GuardRole.Arn
+                  - !GetAtt CitationFetcherRole.Arn
+
+  ValidationProject:
+    Condition: CreatePipeline
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub kta-${AgencySlug}-${EnvironmentName}-validate
+      ServiceRole: !GetAtt PipelineBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: infra/single-tenant/validate-buildspec.yml
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: false
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  DeploymentProject:
+    Condition: CreatePipeline
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub kta-${AgencySlug}-${EnvironmentName}-deploy
+      ServiceRole: !GetAtt PipelineBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: infra/single-tenant/buildspec.yml
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: false
+        EnvironmentVariables:
+          - Name: KTA_STACK_NAME
+            Type: PLAINTEXT
+            Value: !Ref DeploymentStackName
+          - Name: KTA_AGENCY_SLUG
+            Type: PLAINTEXT
+            Value: !Ref AgencySlug
+          - Name: KTA_TEMPLATE_PATH
+            Type: PLAINTEXT
+            Value: infra/single-tenant/template.yaml
+      Tags:
+        - Key: Project
+          Value: kenning-trusted-agent
+        - Key: Agency
+          Value: !Ref AgencyName
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ClientPipeline:
+    Condition: CreatePipeline
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub kta-${AgencySlug}-${EnvironmentName}-pipeline
+      RoleArn: !GetAtt PipelineRole.Arn
+      PipelineType: V2
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactBucket
+      Triggers:
+        - ProviderType: CodeStarSourceConnection
+          GitConfiguration:
+            SourceActionName: Source
+            Push:
+              - Branches:
+                  Includes: [!Ref BranchName]
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref SourceConnectionArn
+                FullRepositoryId: !Ref RepositoryId
+                BranchName: !Ref BranchName
+                DetectChanges: false
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+        - Name: Validate
+          Actions:
+            - Name: ValidatePackage
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref ValidationProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: ValidationOutput
+              RunOrder: 1
+        - Name: Approval
+          Actions:
+            - Name: AgencyChangeApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: !Sub Deploy ${AgencyName} ${EnvironmentName} after package and template validation.
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: DeployStack
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DeploymentProject
+              InputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+
+Outputs:
+  AgencyName:
+    Description: Customer display name.
+    Value: !Ref AgencyName
+  SingleTenantId:
+    Description: The only workspace ID accepted by this deployment.
+    Value: !Ref AgencySlug
+  DataResidencyRegion:
+    Description: AWS region containing the deployment data plane.
+    Value: !Ref AWS::Region
+  AuditTableName:
+    Value: !Ref AuditTable
+  TokenTableName:
+    Value: !Ref TokenTable
+  ReceiptKeyArn:
+    Value: !GetAtt ReceiptKey.Arn
+  TenantOAuthSecretArn:
+    Value: !Ref TenantOAuthSecret
+  GuardFunctionName:
+    Value: !Ref GuardFunction
+  GuardLiveAliasArn:
+    Value: !GetAtt GuardAlias.Arn
+  CitationFetcherFunctionName:
+    Value: !Ref CitationFetcherFunction
+  ApiId:
+    Value: !Ref HttpApi
+  ApiEndpoint:
+    Value: !GetAtt HttpApi.ApiEndpoint
+  PortalBucketName:
+    Value: !Ref PortalBucket
+  PortalDistributionId:
+    Value: !Ref PortalDistribution
+  PortalUrl:
+    Description: Portal URL. Add a DNS alias when PortalDomain is set.
+    Value: !If
+      - HasPortalDomain
+      - !Sub https://${PortalDomain}
+      - !Sub https://${PortalDistribution.DomainName}
+  OidcIssuerUrl:
+    Value: !GetAtt UserPool.ProviderURL
+  OidcClientId:
+    Value: !Ref UserPoolClient
+  OidcDomain:
+    Value: !Sub https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com
+  OperationsDashboardName:
+    Value: !Sub kta-${AgencySlug}-${EnvironmentName}-operations
+  ClientPipelineName:
+    Condition: CreatePipeline
+    Value: !Ref ClientPipeline

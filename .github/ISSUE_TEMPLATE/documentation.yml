@@ -1,0 +1,27 @@
+name: Documentation issue
+description: Report missing, incorrect, or unsafe public documentation
+title: "docs: "
+labels:
+  - documentation
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: File path or public URL.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: State what is wrong and what the reader needs.
+    validations:
+      required: true
+  - type: textarea
+    id: safe_context
+    attributes:
+      label: Safe context
+      description: Include release and tool versions. Do not include secrets or customer data.
+    validations:
+      required: false

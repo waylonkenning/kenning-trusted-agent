@@ -1,0 +1,6 @@
+:root {
+  --sans: Arial, Helvetica, sans-serif;
+  --mono: 'Courier New', Courier, monospace;
+  --portal-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --portal-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
