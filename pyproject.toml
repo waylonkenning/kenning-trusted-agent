@@ -15,7 +15,7 @@ dependencies = ["boto3>=1.34,<2"]
 [project.optional-dependencies]
 dev = [
   "coverage>=7,<8",
-  "pytest>=8,<9",
+  "pytest>=8,<10",
 ]
 
 [tool.setuptools]
