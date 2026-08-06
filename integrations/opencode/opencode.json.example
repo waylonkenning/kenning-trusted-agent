@@ -1,0 +1,50 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "{env:OPENCODE_MODEL}",
+  "enabled_providers": ["amazon-bedrock"],
+  "provider": {
+    "amazon-bedrock": {
+      "options": {
+        "region": "{env:AWS_REGION}"
+      }
+    }
+  },
+  "mcp": {
+    "kenning-agent-guard": {
+      "type": "remote",
+      "url": "{env:KENNING_MCP_URL}",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer {env:KENNING_PAT}",
+        "X-Kenning-Tenant-Id": "{env:KENNING_TENANT_ID}"
+      }
+    },
+    "kenning-citation-trust": {
+      "type": "remote",
+      "url": "{env:KENNING_CITATION_MCP_URL}",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer {env:KENNING_PAT}"
+      }
+    }
+  },
+  "permission": {
+    "bash": "allow",
+    "edit": "allow",
+    "write": "allow",
+    "apply_patch": "allow",
+    "read": "allow",
+    "grep": "allow",
+    "glob": "allow",
+    "task": "deny",
+    "external_directory": "deny",
+    "webfetch": "ask",
+    "kenning-agent-guard_*": "allow",
+    "kenning-agent-guard_evaluate_action": "deny",
+    "kenning-citation-trust_*": "allow"
+  },
+  "subagent_depth": 0,
+  "share": "disabled",
+  "autoupdate": false,
+  "instructions": ["./AGENTS.md"]
+}

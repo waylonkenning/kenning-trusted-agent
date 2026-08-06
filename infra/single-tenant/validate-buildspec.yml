@@ -1,0 +1,18 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+      nodejs: 22
+  pre_build:
+    commands:
+      - python3 scripts/validate_single_tenant_package.py --region "$AWS_REGION"
+      - python3 -m compileall -q app scripts/build_single_tenant_artifacts.py scripts/validate_single_tenant_package.py
+      - npm --prefix portal ci --ignore-scripts
+  build:
+    commands:
+      - npm --prefix portal run build -- --outDir /tmp/kta-single-tenant-validation-dist
+  post_build:
+    commands:
+      - echo "Single-tenant package validation completed."

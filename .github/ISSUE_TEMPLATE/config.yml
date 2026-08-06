@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/waylonkenning/kenning-trusted-agent/security/advisories/new
+    about: Use a private advisory. Do not publish exploit details or secrets.
+  - name: Read the support policy
+    url: https://github.com/waylonkenning/kenning-trusted-agent/blob/main/SUPPORT.md
+    about: Confirm that the issue is in the public self-hosting scope.

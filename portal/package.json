@@ -1,0 +1,34 @@
+{
+  "name": "kenning-trusted-agent-portal",
+  "private": false,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "test:e2e:public": "playwright test --config=playwright.public.config.mjs",
+    "test:e2e:local": "bash run-e2e-local.sh",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.7",
+    "@vitejs/plugin-react": "^4.3.4",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^6.0.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.26"
+  }
+}

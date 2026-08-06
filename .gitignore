@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+.aws-sam/
+*.zip
+portal/node_modules/
+portal/dist/
+portal/.cloudfront-distribution-id
+portal/.cloudfront-distribution-id-*
+portal/playwright-report/
+portal/test-results/
+.coverage
+output/
+tmp/

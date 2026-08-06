@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+      nodejs: 22
+  pre_build:
+    commands:
+      - test -n "$KTA_STACK_NAME"
+      - test -f "${KTA_PARAMETERS_FILE:-infra/single-tenant/client-parameters.json}"
+      - python3 scripts/validate_single_tenant_package.py --region "$AWS_REGION"
+      - npm --prefix portal ci --ignore-scripts
+  build:
+    commands:
+      - ./scripts/deploy_single_tenant.sh deploy --stack-name "$KTA_STACK_NAME" --parameters-file "${KTA_PARAMETERS_FILE:-infra/single-tenant/client-parameters.json}" --artifacts-dir .single-tenant-artifacts
+  post_build:
+    commands:
+      - echo "Single-tenant deployment completed through AWS CodePipeline."
