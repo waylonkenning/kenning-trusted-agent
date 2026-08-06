@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.7",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.5",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
